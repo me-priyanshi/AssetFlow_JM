@@ -28,9 +28,12 @@ export const AuthProvider = ({ children }) => {
     const tokenParts = res.data.access.split('.');
     if (tokenParts.length === 3) {
       const payload = JSON.parse(atob(tokenParts[1]));
-      // Note: role isn't in default simplejwt payload unless we customize TokenObtainPairSerializer.
-      // We will need to customize the backend serializer to include 'role' and 'name'.
-      const loggedUser = { id: payload.user_id, email, role: payload.role || 'Employee' };
+      const loggedUser = {
+        id: payload.user_id,
+        email,
+        role: payload.role || 'Employee',
+        name: payload.name || email,
+      };
       setUser(loggedUser);
       localStorage.setItem('user', JSON.stringify(loggedUser));
     }

@@ -5,6 +5,7 @@ import api from '../../api/axiosConfig';
 const Signup = () => {
   const [formData, setFormData] = useState({ name: '', email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -16,7 +17,10 @@ const Signup = () => {
     
     try {
       await api.post('auth/signup/', formData);
-      navigate('/login');
+      setSuccess(true);
+      setTimeout(() => {
+        navigate('/login');
+      }, 3000);
     } catch (err) {
       if (err.response?.data) {
         setError(JSON.stringify(err.response.data));
@@ -31,6 +35,11 @@ const Signup = () => {
       <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
         <h2 className="text-2xl font-bold text-center text-slate-800 mb-6">Create Account</h2>
         {error && <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-sm break-words">{error}</div>}
+        {success && (
+          <div className="bg-green-50 text-green-700 p-3 rounded mb-4 text-sm text-center">
+            Signup successful! Redirecting to login...
+          </div>
+        )}
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

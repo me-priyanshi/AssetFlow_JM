@@ -17,14 +17,53 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
-WRITE_ROLES = ['Admin', 'AssetManager']
+WRITE_ROLES = ['Admin', 'AssetManager', 'DepartmentHead']
 APPROVE_ROLES = ['Admin', 'AssetManager', 'DepartmentHead']
+
+
+def can_manage_allocations(user):
+    return user.role in WRITE_ROLES
+
+
+def can_return_allocation(user, allocation):
+    """Managers/heads, or the employee holder, or DeptHead of a department-held allocation."""
+    if can_manage_allocations(user):
+        return True
+    if allocation.employee_id and allocation.employee_id == user.id:
+        return True
+    if (
+        allocation.department_id
+        and user.role == 'DepartmentHead'
+        and user.department_id == allocation.department_id
+    ):
+        return True
+    return False
+
+
+def department_head_transfer_q(user):
+    """Transfers involving the DeptHead's department (current holder or target)."""
+    dept_id = user.department_id
+    if not dept_id:
+        return models.Q(pk__in=[])
+    return (
+        models.Q(allocation__employee__department_id=dept_id)
+        | models.Q(allocation__department_id=dept_id)
+        | models.Q(requested_for_employee__department_id=dept_id)
+        | models.Q(requested_for_department_id=dept_id)
+    )
+
+
+def can_approve_transfer(user, transfer):
+    # Admin, Asset Manager, and Department Head all approve org-wide (same as manager)
+    if user.role in APPROVE_ROLES:
+        return True
+    return False
 
 
 class AssetViewSet(viewsets.ModelViewSet):
     """
     List/Retrieve: any authenticated user.
-    Create/Update/Destroy: Admin or AssetManager only.
+    Create/Update/Destroy: Admin, AssetManager, or DepartmentHead.
     """
     queryset = Asset.objects.select_related('category').prefetch_related('documents', 'allocations')
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -116,12 +155,34 @@ class AllocationViewSet(viewsets.GenericViewSet):
     queryset = Allocation.objects.select_related('asset', 'employee', 'department')
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        if self.action == 'create':
+            return [IsRole(*WRITE_ROLES)()]
+        # return_asset: any authenticated user; object-level check in the action
+        return [IsAuthenticated()]
+
     def get_queryset(self):
         qs = super().get_queryset()
-        is_overdue = self.request.query_params.get('is_overdue')
+        user = self.request.user
+        params = self.request.query_params
+
+        # Managers see org-wide; everyone else only their own employee allocations
+        if not can_manage_allocations(user):
+            qs = qs.filter(employee=user)
+
+        mine = params.get('mine')
+        if mine and mine.lower() in ('1', 'true', 'yes'):
+            qs = qs.filter(employee=user)
+
+        status_filter = params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        is_overdue = params.get('is_overdue')
         if is_overdue and is_overdue.lower() == 'true':
-            # Overdue = Active + expected_return_date < today
+            # Overdue = Active + expected_return_date < today (computed flag, not stored)
             qs = qs.filter(status='Active', expected_return_date__lt=date.today())
+
         return qs
 
     def list(self, request):
@@ -147,7 +208,7 @@ class AllocationViewSet(viewsets.GenericViewSet):
             holder_type = 'employee' if existing.employee_id else 'department'
             return Response(
                 {
-                    'detail': f'Asset is already allocated.',
+                    'detail': 'Asset is already allocated.',
                     'current_holder': {
                         'id': holder_id,
                         'name': holder_name,
@@ -156,6 +217,12 @@ class AllocationViewSet(viewsets.GenericViewSet):
                     }
                 },
                 status=status.HTTP_409_CONFLICT
+            )
+
+        if asset.status != 'Available':
+            return Response(
+                {'detail': f'Cannot allocate asset with status "{asset.status}". Asset must be Available.'},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
@@ -174,8 +241,19 @@ class AllocationViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=['post'], url_path='return')
     def return_asset(self, request, pk=None):
-        """POST /api/allocations/{id}/return"""
-        allocation = self.get_object()
+        """POST /api/allocations/{id}/return — holder or manager."""
+        try:
+            allocation = Allocation.objects.select_related(
+                'asset', 'employee', 'department'
+            ).get(pk=pk)
+        except Allocation.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not can_return_allocation(request.user, allocation):
+            return Response(
+                {'detail': 'You do not have permission to return this allocation.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         if allocation.status != 'Active':
             return Response(
@@ -183,8 +261,12 @@ class AllocationViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        pending = TransferRequest.objects.filter(allocation=allocation, status='Requested')
         notes = request.data.get('checkin_condition_notes', '')
         with transaction.atomic():
+            # Auto-reject pending transfers when the asset is returned
+            pending.update(status='Rejected', approved_by=request.user)
+
             allocation.status = 'Returned'
             allocation.actual_return_date = date.today()
             allocation.checkin_condition_notes = notes
@@ -201,20 +283,27 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
     """Handles transfer request creation, approval, and rejection."""
     serializer_class = TransferRequestSerializer
     queryset = TransferRequest.objects.select_related(
-        'allocation__asset', 'requested_by',
-        'requested_for_employee', 'requested_for_department', 'approved_by'
+        'allocation__asset', 'allocation__employee', 'allocation__department',
+        'requested_by', 'requested_for_employee', 'requested_for_department', 'approved_by'
     )
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
         qs = self.get_queryset()
-        # Non-admin/managers see only their own requests
-        if request.user.role not in APPROVE_ROLES:
-            qs = qs.filter(requested_by=request.user)
+        role = request.user.role
+
+        if role in APPROVE_ROLES:
+            pass  # org-wide inbox for Admin, Asset Manager, and Department Head
         else:
-            status_filter = request.query_params.get('status')
-            if status_filter:
-                qs = qs.filter(status=status_filter)
+            # Employees see transfers they submitted OR where they are the target
+            qs = qs.filter(
+                models.Q(requested_by=request.user)
+                | models.Q(requested_for_employee=request.user)
+            )
+
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
@@ -230,6 +319,12 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
     def approve(self, request, pk=None):
         """POST /api/transfer-requests/{id}/approve — atomically re-allocates."""
         transfer = self.get_object()
+
+        if not can_approve_transfer(request.user, transfer):
+            return Response(
+                {'detail': 'You can only approve transfers involving your department.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         if transfer.status != 'Requested':
             return Response(
@@ -255,6 +350,7 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
                 asset=old_allocation.asset,
                 allocated_date=date.today(),
                 status='Active',
+                expected_return_date=old_allocation.expected_return_date,
             )
             if transfer.requested_for_employee_id:
                 new_allocation.employee = transfer.requested_for_employee
@@ -267,7 +363,14 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
             transfer.approved_by = request.user
             transfer.save(update_fields=['status', 'approved_by', 'updated_at'])
 
-            # 4. Ensure asset stays Allocated (atomic — never surfaces as Available)
+            # 4. Reject sibling pending requests for the same allocation
+            TransferRequest.objects.filter(
+                allocation=old_allocation, status='Requested'
+            ).exclude(pk=transfer.pk).update(
+                status='Rejected', approved_by=request.user
+            )
+
+            # 5. Ensure asset stays Allocated (atomic — never surfaces as Available)
             old_allocation.asset.status = 'Allocated'
             old_allocation.asset.save(update_fields=['status'])
 
@@ -282,6 +385,12 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
         """POST /api/transfer-requests/{id}/reject"""
         transfer = self.get_object()
 
+        if not can_approve_transfer(request.user, transfer):
+            return Response(
+                {'detail': 'You can only reject transfers involving your department.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if transfer.status != 'Requested':
             return Response(
                 {'detail': f'Transfer request is already {transfer.status}.'},
@@ -293,6 +402,3 @@ class TransferRequestViewSet(viewsets.GenericViewSet):
         transfer.save(update_fields=['status', 'approved_by', 'updated_at'])
 
         return Response(self.get_serializer(transfer).data)
-
-
-

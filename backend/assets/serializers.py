@@ -124,7 +124,7 @@ class TransferRequestSerializer(serializers.ModelSerializer):
             'approved_by', 'approved_by_name',
             'status', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['status', 'approved_by', 'created_at', 'updated_at']
+        read_only_fields = ['requested_by', 'status', 'approved_by', 'created_at', 'updated_at']
 
     def validate(self, data):
         has_employee = bool(data.get('requested_for_employee'))
@@ -138,5 +138,12 @@ class TransferRequestSerializer(serializers.ModelSerializer):
         if allocation and allocation.status != 'Active':
             raise serializers.ValidationError(
                 'Can only request a transfer for an Active allocation.'
+            )
+        # Block duplicate pending transfers for the same allocation
+        if allocation and TransferRequest.objects.filter(
+            allocation=allocation, status='Requested'
+        ).exists():
+            raise serializers.ValidationError(
+                'A transfer request is already pending for this allocation.'
             )
         return data

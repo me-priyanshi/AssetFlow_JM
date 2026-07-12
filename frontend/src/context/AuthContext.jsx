@@ -33,6 +33,7 @@ export const AuthProvider = ({ children }) => {
         email,
         role: payload.role || 'Employee',
         name: payload.name || email,
+        department_id: payload.department_id ?? null,
       };
       setUser(loggedUser);
       localStorage.setItem('user', JSON.stringify(loggedUser));

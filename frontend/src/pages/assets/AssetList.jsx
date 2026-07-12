@@ -6,7 +6,7 @@ import SharedTable from '../../components/SharedTable';
 import StatusBadge from '../../components/StatusBadge';
 import AssetFormModal from './AssetFormModal';
 
-const WRITE_ROLES = ['Admin', 'AssetManager'];
+const WRITE_ROLES = ['Admin', 'AssetManager', 'DepartmentHead'];
 
 const AssetList = () => {
   const { user } = useAuth();

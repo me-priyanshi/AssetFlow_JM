@@ -7,7 +7,7 @@ import SharedTable from '../../components/SharedTable';
 import AssetFormModal from './AssetFormModal';
 import AllocationModal from '../allocations/AllocationModal';
 
-const WRITE_ROLES = ['Admin', 'AssetManager'];
+const WRITE_ROLES = ['Admin', 'AssetManager', 'DepartmentHead'];
 
 const AssetDetail = () => {
   const { id } = useParams();
@@ -20,6 +20,7 @@ const AssetDetail = () => {
   const [departments, setDepartments] = useState([]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAllocateModal, setShowAllocateModal] = useState(false);
+  const [allocateMode, setAllocateMode] = useState('allocate'); // 'allocate' | 'transfer'
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [returnNotes, setReturnNotes] = useState('');
   const [returning, setReturning] = useState(false);
@@ -41,6 +42,19 @@ const AssetDetail = () => {
   }, [id]);
 
   const activeAllocation = asset?.allocation_history?.find(a => a.status === 'Active');
+
+  const isHolder = Boolean(
+    activeAllocation && (
+      activeAllocation.employee === user?.id
+      || (
+        user?.role === 'DepartmentHead'
+        && activeAllocation.department
+        && activeAllocation.department === user?.department_id
+      )
+    )
+  );
+  const canWrite = WRITE_ROLES.includes(user?.role);
+  const canReturn = canWrite || isHolder;
 
   const handleReturn = async () => {
     if (!activeAllocation) return;
@@ -130,28 +144,32 @@ const AssetDetail = () => {
                   Edit
                 </button>
               )}
-              {asset.status === 'Available' && WRITE_ROLES.includes(user?.role) && (
+              {asset.status === 'Available' && canWrite && (
                 <button
-                  onClick={() => setShowAllocateModal(true)}
+                  onClick={() => { setAllocateMode('allocate'); setShowAllocateModal(true); }}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                 >
                   Allocate
                 </button>
               )}
-              {asset.status === 'Allocated' && WRITE_ROLES.includes(user?.role) && (
+              {asset.status === 'Allocated' && (
                 <>
-                  <button
-                    onClick={() => setShowAllocateModal(true)}
-                    className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
-                  >
-                    Transfer
-                  </button>
-                  <button
-                    onClick={() => setShowReturnForm(true)}
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"
-                  >
-                    Mark Returned
-                  </button>
+                  {canWrite && (
+                    <button
+                      onClick={() => { setAllocateMode('transfer'); setShowAllocateModal(true); }}
+                      className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+                    >
+                      Transfer
+                    </button>
+                  )}
+                  {canReturn && (
+                    <button
+                      onClick={() => setShowReturnForm(true)}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"
+                    >
+                      Mark Returned
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -297,6 +315,8 @@ const AssetDetail = () => {
       {showAllocateModal && (
         <AllocationModal
           asset={asset}
+          activeAllocation={activeAllocation}
+          initialMode={allocateMode}
           onClose={() => setShowAllocateModal(false)}
           onSuccess={handleAllocateSuccess}
         />

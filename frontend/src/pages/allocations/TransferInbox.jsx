@@ -88,7 +88,9 @@ const TransferInbox = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Transfer Requests</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              {canApprove ? 'Review and approve pending asset transfer requests.' : 'Your submitted transfer requests.'}
+              {canApprove
+                ? 'Review and approve pending asset transfer requests.'
+                : 'Transfers you submitted or that name you as the new holder.'}
             </p>
           </div>
           <select
@@ -97,7 +99,7 @@ const TransferInbox = () => {
             onChange={e => setStatusFilter(e.target.value)}
           >
             <option value="">All Statuses</option>
-            {['Requested', 'Approved', 'Rejected', 'Re-allocated'].map(s => (
+            {['Requested', 'Rejected', 'Re-allocated'].map(s => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>

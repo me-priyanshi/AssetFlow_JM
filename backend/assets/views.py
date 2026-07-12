@@ -57,9 +57,47 @@ class AssetViewSet(viewsets.ModelViewSet):
         if search:
             qs = qs.filter(
                 models.Q(asset_tag__icontains=search) |
-                models.Q(serial_number__icontains=search)
+                models.Q(serial_number__icontains=search) |
+                models.Q(name__icontains=search)
             )
         return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        asset = self.get_object()
+        new_status = request.data.get('status')
+        
+        # If the user is trying to change the status manually via the generic endpoint
+        if new_status and new_status != asset.status:
+            from rest_framework.exceptions import ValidationError
+            from .services import transition_status
+            
+            if new_status in ['Allocated', 'Reserved', 'Under Maintenance']:
+                raise ValidationError({'status': f'This status is managed by dedicated workflows and cannot be set directly.'})
+            
+            # Validate mathematically via the service (saves the new status)
+            transition_status(asset, new_status, request.user)
+            
+            # Remove status from the data so the standard serializer doesn't override or fail validation
+            mutable_data = request.data.copy()
+            if hasattr(mutable_data, 'pop'):
+                mutable_data.pop('status', None)
+            else:
+                del mutable_data['status']
+            
+            serializer = self.get_serializer(asset, data=mutable_data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
+            
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError({'detail': 'Assets cannot be deleted — retire or dispose instead.'})
 
     @action(detail=True, methods=['post'], url_path='upload-document',
             permission_classes=[IsRole(*WRITE_ROLES)()])

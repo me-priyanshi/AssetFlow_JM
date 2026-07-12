@@ -1,18 +1,25 @@
 from django.db import models
 from django.db.models import Q
 from django.core.exceptions import ValidationError
+import datetime
 
+
+from django.core.validators import MinValueValidator
+
+class AssetTagSequence(models.Model):
+    last_number = models.IntegerField(default=0)
+
+    @classmethod
+    def get_next_tag(cls):
+        # Must be called within a transaction!
+        seq, created = cls.objects.select_for_update().get_or_create(id=1)
+        seq.last_number += 1
+        seq.save(update_fields=['last_number'])
+        return f'AF-{str(seq.last_number).zfill(4)}'
 
 def generate_asset_tag():
-    """Generate next sequential asset tag in format AF-0001."""
-    last = Asset.objects.order_by('-id').first()
-    if not last or not last.asset_tag:
-        return 'AF-0001'
-    try:
-        last_num = int(last.asset_tag.split('-')[1])
-        return f'AF-{str(last_num + 1).zfill(4)}'
-    except (IndexError, ValueError):
-        return 'AF-0001'
+    """Legacy generator, not used in favor of get_next_tag inside transaction."""
+    pass
 
 
 class Asset(models.Model):
@@ -41,19 +48,36 @@ class Asset(models.Model):
     )
     asset_tag = models.CharField(max_length=20, unique=True, blank=True)
     serial_number = models.CharField(max_length=255, unique=True, null=True, blank=True)
-    acquisition_date = models.DateField(null=True, blank=True)
-    acquisition_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    acquisition_date = models.DateField(default=datetime.date.today)
+    acquisition_cost = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)], default=0)
     condition = models.CharField(max_length=20, choices=CONDITION_CHOICES, default='New')
-    location = models.CharField(max_length=255, blank=True)
+    location = models.CharField(max_length=255)
+    department = models.ForeignKey(
+        'organization.Department',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name='owned_assets'
+    )
     photo = models.ImageField(upload_to='assets/photos/', null=True, blank=True)
     is_bookable = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Available')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        'accounts.Employee',
+        on_delete=models.PROTECT,
+        related_name='assets_registered',
+        null=True, blank=True # Nullable temporarily for migrations, enforced in API
+    )
 
     def save(self, *args, **kwargs):
+        # We don't auto-generate tag in save() anymore because we want it inside
+        # the same atomic block in the view/serializer to avoid race conditions.
+        # But for safety, if forced via admin panel:
         if not self.asset_tag:
-            self.asset_tag = generate_asset_tag()
+            from django.db import transaction
+            with transaction.atomic():
+                self.asset_tag = AssetTagSequence.get_next_tag()
         super().save(*args, **kwargs)
 
     def __str__(self):

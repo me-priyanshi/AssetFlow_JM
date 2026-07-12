@@ -4,13 +4,16 @@ import SharedTable from '../../components/SharedTable';
 
 const EmployeeDirectoryTab = () => {
   const [employees, setEmployees] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [promotionModalOpen, setPromotionModalOpen] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState(null);
-  const [newRole, setNewRole] = useState('DepartmentHead');
+  const [newRole, setNewRole] = useState('Employee');
+  const [newDepartment, setNewDepartment] = useState('');
 
   useEffect(() => {
     fetchEmployees();
+    fetchDepartments();
   }, []);
 
   const fetchEmployees = async () => {
@@ -24,14 +27,26 @@ const EmployeeDirectoryTab = () => {
     }
   };
 
+  const fetchDepartments = async () => {
+    try {
+      const res = await api.get('organization/departments/');
+      setDepartments(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handlePromote = async () => {
     if (!selectedEmp) return;
     try {
-      await api.post(`organization/employees/${selectedEmp.id}/promote/`, { role: newRole });
+      await api.post(`organization/employees/${selectedEmp.id}/manage/`, { 
+        role: newRole,
+        department_id: newDepartment || null
+      });
       setPromotionModalOpen(false);
       fetchEmployees();
     } catch (err) {
-      alert('Promotion failed');
+      alert('Update failed');
     }
   };
 
@@ -48,17 +63,24 @@ const EmployeeDirectoryTab = () => {
   ];
 
   const actionRender = (row) => {
-    if (row.role === 'Employee') {
-      return (
-        <button 
-          onClick={() => { setSelectedEmp(row); setPromotionModalOpen(true); }}
-          className="text-blue-600 hover:text-blue-800 font-medium text-sm"
-        >
-          Promote
-        </button>
-      );
-    }
-    return null;
+    // Only Admin can manage employees in this view (based on the original requirement)
+    // Actually, EmployeeDirectoryView is visible to Dept Head and Asset Manager, but they can't call the manage endpoint.
+    return (
+      <button 
+        onClick={() => { 
+          setSelectedEmp(row); 
+          setNewRole(row.role);
+          // row doesn't expose department_id currently in EmployeeDirectorySerializer, 
+          // let's rely on department_name matching or just leave it empty to keep as is,
+          // or we can just send it if they change it.
+          setNewDepartment(''); 
+          setPromotionModalOpen(true); 
+        }}
+        className="text-blue-600 hover:text-blue-800 font-medium text-sm"
+      >
+        Manage
+      </button>
+    );
   };
 
   if (loading) return <div>Loading...</div>;
@@ -68,23 +90,41 @@ const EmployeeDirectoryTab = () => {
       <SharedTable columns={columns} data={employees} onAction={actionRender} />
 
       {promotionModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h3 className="text-xl font-bold mb-4">Promote {selectedEmp?.name}</h3>
+            <h3 className="text-xl font-bold mb-4">Manage {selectedEmp?.name}</h3>
+            
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">Select New Role</label>
+              <label className="block text-sm font-medium mb-2">Role</label>
               <select 
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="w-full border border-slate-300 rounded p-2"
+                className="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
+                <option value="Employee">Employee</option>
                 <option value="DepartmentHead">Department Head</option>
                 <option value="AssetManager">Asset Manager</option>
+                <option value="Admin">Admin</option>
               </select>
             </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">Assign Department</label>
+              <select 
+                value={newDepartment}
+                onChange={(e) => setNewDepartment(e.target.value)}
+                className="w-full border border-slate-300 rounded p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Don't Change --</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex justify-end gap-2 mt-6">
               <button onClick={() => setPromotionModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
-              <button onClick={handlePromote} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Promote</button>
+              <button onClick={handlePromote} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Changes</button>
             </div>
           </div>
         </div>

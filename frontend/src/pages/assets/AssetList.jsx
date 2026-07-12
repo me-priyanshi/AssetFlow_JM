@@ -13,6 +13,7 @@ const AssetList = () => {
   const navigate = useNavigate();
   const [assets, setAssets] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [filters, setFilters] = useState({ category: '', status: '', location: '', search: '' });
@@ -36,6 +37,7 @@ const AssetList = () => {
 
   useEffect(() => {
     api.get('organization/categories/').then(r => setCategories(r.data)).catch(() => {});
+    api.get('organization/departments/').then(r => setDepartments(r.data)).catch(() => {});
   }, []);
 
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
@@ -138,6 +140,7 @@ const AssetList = () => {
           onClose={() => setShowCreateModal(false)}
           onSuccess={() => { setShowCreateModal(false); fetchAssets(); }}
           categories={categories}
+          departments={departments}
         />
       )}
     </div>

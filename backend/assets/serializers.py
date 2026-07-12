@@ -23,16 +23,18 @@ class AssetSerializer(serializers.ModelSerializer):
     asset_tag = serializers.CharField(read_only=True)
     documents = AssetDocumentSerializer(many=True, read_only=True)
     category_name = serializers.CharField(source='category.name', read_only=True)
+    department_name = serializers.CharField(source='department.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.name', read_only=True)
 
     class Meta:
         model = Asset
         fields = [
             'id', 'name', 'category', 'category_name', 'asset_tag',
             'serial_number', 'acquisition_date', 'acquisition_cost',
-            'condition', 'location', 'photo', 'is_bookable', 'status',
-            'created_at', 'updated_at', 'documents',
+            'condition', 'location', 'department', 'department_name', 'photo', 'is_bookable', 'status',
+            'created_at', 'updated_at', 'documents', 'created_by', 'created_by_name'
         ]
-        read_only_fields = ['asset_tag', 'created_at', 'updated_at']
+        read_only_fields = ['asset_tag', 'created_at', 'updated_at', 'created_by']
 
 
 class AllocationSummarySerializer(serializers.ModelSerializer):

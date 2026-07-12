@@ -3,11 +3,12 @@ import api from '../../api/axiosConfig';
 
 const CONDITION_OPTIONS = ['New', 'Good', 'Fair', 'Poor', 'Damaged'];
 
-const AssetFormModal = ({ onClose, onSuccess, categories, asset = null }) => {
+const AssetFormModal = ({ onClose, onSuccess, categories, departments = [], asset = null }) => {
   const isEdit = Boolean(asset);
   const [form, setForm] = useState({
     name: asset?.name || '',
     category: asset?.category || '',
+    department: asset?.department || '',
     serial_number: asset?.serial_number || '',
     acquisition_date: asset?.acquisition_date || '',
     acquisition_cost: asset?.acquisition_cost || '',
@@ -25,11 +26,26 @@ const AssetFormModal = ({ onClose, onSuccess, categories, asset = null }) => {
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
   };
 
+  const handlePhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (file && file.size > 5 * 1024 * 1024) {
+      setError('Photo must be smaller than 5MB.');
+      return;
+    }
+    setError('');
+    setPhoto(file);
+  };
+
   const handleDocumentChange = (e) => {
     const files = Array.from(e.target.files);
     const nonPdfs = files.filter(f => !f.name.toLowerCase().endsWith('.pdf'));
     if (nonPdfs.length > 0) {
       setError('Only PDF files are allowed for documents.');
+      return;
+    }
+    const oversized = files.filter(f => f.size > 5 * 1024 * 1024);
+    if (oversized.length > 0) {
+      setError('Each document must be smaller than 5MB.');
       return;
     }
     setError('');
@@ -129,6 +145,19 @@ const AssetFormModal = ({ onClose, onSuccess, categories, asset = null }) => {
               </select>
             </div>
 
+            {/* Department */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Owning Department</label>
+              <select
+                name="department"
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.department} onChange={handleChange}
+              >
+                <option value="">None (Org-wide)</option>
+                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+
             {/* Serial Number */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Serial Number</label>
@@ -189,7 +218,7 @@ const AssetFormModal = ({ onClose, onSuccess, categories, asset = null }) => {
             <input
               type="file" accept="image/*"
               className="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:font-medium hover:file:bg-blue-100"
-              onChange={(e) => setPhoto(e.target.files[0])}
+              onChange={handlePhotoChange}
             />
           </div>
 

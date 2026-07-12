@@ -14,7 +14,23 @@ logger = logging.getLogger(__name__)
 class DepartmentViewSet(viewsets.ModelViewSet):
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    permission_classes = [IsRole('Admin')()]
+
+    def get_permissions(self):
+        from rest_framework.permissions import IsAuthenticated
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        return [IsRole('Admin')()]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        if user.role in ['Admin', 'AssetManager']:
+            return qs
+        elif user.role in ['DepartmentHead', 'Employee']:
+            if user.department:
+                return qs.filter(id=user.department.id)
+            return qs.none()
+        return qs.none()
 
     def perform_destroy(self, instance):
         if instance.employees.filter(status='Active').exists():
@@ -49,7 +65,12 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 class AssetCategoryViewSet(viewsets.ModelViewSet):
     queryset = AssetCategory.objects.all()
     serializer_class = AssetCategorySerializer
-    permission_classes = [IsRole('Admin')()]
+
+    def get_permissions(self):
+        from rest_framework.permissions import IsAuthenticated
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        return [IsRole('Admin')()]
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -59,10 +80,24 @@ class AssetCategoryViewSet(viewsets.ModelViewSet):
 
 class EmployeeDirectoryView(generics.ListAPIView):
     serializer_class = EmployeeDirectorySerializer
-    permission_classes = [IsRole('Admin')()]
+
+    def get_permissions(self):
+        return [IsRole('Admin', 'AssetManager', 'DepartmentHead')()]
 
     def get_queryset(self):
         queryset = Employee.objects.all()
+        user = self.request.user
+        
+        if user.role in ['Admin', 'AssetManager']:
+            pass
+        elif user.role == 'DepartmentHead':
+            if user.department:
+                queryset = queryset.filter(department=user.department)
+            else:
+                queryset = queryset.none()
+        else:
+            queryset = queryset.none()
+
         department = self.request.query_params.get('department')
         role = self.request.query_params.get('role')
         status = self.request.query_params.get('status')
@@ -76,7 +111,7 @@ class EmployeeDirectoryView(generics.ListAPIView):
             
         return queryset
 
-class EmployeePromoteView(APIView):
+class EmployeeManageView(APIView):
     permission_classes = [IsRole('Admin')()]
 
     def post(self, request, id):
@@ -86,12 +121,27 @@ class EmployeePromoteView(APIView):
             return Response({"error": "Employee not found"}, status=status.HTTP_404_NOT_FOUND)
 
         new_role = request.data.get('role')
-        if new_role not in ['DepartmentHead', 'AssetManager']:
-            return Response({"error": "Invalid role for promotion"}, status=status.HTTP_400_BAD_REQUEST)
-
-        old_role = employee.role
-        employee.role = new_role
-        employee.save()
+        department_id = request.data.get('department_id')
         
-        logger.info(f"Admin {request.user.email} promoted {employee.email} from {old_role} to {new_role}")
-        return Response({"message": f"Employee promoted to {new_role} successfully."}, status=status.HTTP_200_OK)
+        updates = []
+        if new_role and new_role != employee.role:
+            if new_role not in ['Employee', 'DepartmentHead', 'AssetManager', 'Admin']:
+                return Response({"error": "Invalid role"}, status=status.HTTP_400_BAD_REQUEST)
+            employee.role = new_role
+            updates.append(f"role to {new_role}")
+
+        if department_id:
+            try:
+                from .models import Department
+                dept = Department.objects.get(id=department_id)
+                employee.department = dept
+                updates.append(f"department to {dept.name}")
+            except Department.DoesNotExist:
+                return Response({"error": "Department not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if updates:
+            employee.save()
+            logger.info(f"Admin {request.user.email} updated {employee.email}: {', '.join(updates)}")
+            return Response({"message": f"Employee updated successfully."}, status=status.HTTP_200_OK)
+        
+        return Response({"message": "No changes made."}, status=status.HTTP_200_OK)

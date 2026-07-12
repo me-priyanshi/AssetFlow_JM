@@ -17,6 +17,7 @@ const AssetDetail = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [categories, setCategories] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAllocateModal, setShowAllocateModal] = useState(false);
   const [showReturnForm, setShowReturnForm] = useState(false);
@@ -36,6 +37,7 @@ const AssetDetail = () => {
   useEffect(() => {
     fetchAsset();
     api.get('organization/categories/').then(r => setCategories(r.data)).catch(() => {});
+    api.get('organization/departments/').then(r => setDepartments(r.data)).catch(() => {});
   }, [id]);
 
   const activeAllocation = asset?.allocation_history?.find(a => a.status === 'Active');
@@ -58,6 +60,16 @@ const AssetDetail = () => {
     setShowAllocateModal(false);
     setSuccessMsg(type === 'transfer' ? 'Transfer request submitted.' : 'Asset allocated successfully.');
     fetchAsset();
+  };
+
+  const handleStatusChange = async (newStatus) => {
+    try {
+      await api.patch(`assets/${id}/`, { status: newStatus });
+      setSuccessMsg(`Status updated to ${newStatus}.`);
+      fetchAsset();
+    } catch (err) {
+      alert(err.response?.data?.status || err.response?.data?.detail || 'Failed to update status.');
+    }
   };
 
   if (loading) return <div className="flex justify-center py-20 text-slate-400">Loading…</div>;
@@ -88,6 +100,23 @@ const AssetDetail = () => {
               <div className="flex items-center gap-3 mb-1">
                 <span className="font-mono font-bold text-xl text-blue-600">{asset.asset_tag}</span>
                 <StatusBadge status={asset.status} />
+                
+                {/* Manual Status Transition Dropdown */}
+                {WRITE_ROLES.includes(user?.role) && (
+                  <select
+                    className="ml-2 border border-slate-300 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    value=""
+                    onChange={(e) => {
+                      if(e.target.value) handleStatusChange(e.target.value);
+                    }}
+                  >
+                    <option value="" disabled>Change Status…</option>
+                    {asset.status === 'Available' && <><option value="Retired">Retire</option><option value="Lost">Mark Lost</option></>}
+                    {asset.status === 'Lost' && <><option value="Available">Mark Found (Available)</option><option value="Retired">Retire</option></>}
+                    {asset.status === 'Retired' && <option value="Disposed">Dispose</option>}
+                    {asset.status === 'Under Maintenance' && <option value="Retired">Retire</option>}
+                  </select>
+                )}
               </div>
               <h1 className="text-2xl font-bold text-slate-800">{asset.name}</h1>
               <p className="text-slate-500 text-sm">{asset.category_name} · {asset.location || 'No location'}</p>
@@ -164,9 +193,11 @@ const AssetDetail = () => {
                 ['Serial Number', asset.serial_number || '—'],
                 ['Condition', asset.condition],
                 ['Location', asset.location || '—'],
+                ['Owning Department', asset.department_name || 'Org-wide'],
                 ['Acquisition Date', asset.acquisition_date || '—'],
                 ['Acquisition Cost', asset.acquisition_cost ? `₹${parseFloat(asset.acquisition_cost).toLocaleString()}` : '—'],
                 ['Bookable', asset.is_bookable ? 'Yes' : 'No'],
+                ['Registered By', asset.created_by_name || 'System'],
                 ['Created', new Date(asset.created_at).toLocaleDateString()],
               ].map(([label, val]) => (
                 <div key={label} className="flex justify-between text-sm">
@@ -257,6 +288,7 @@ const AssetDetail = () => {
         <AssetFormModal
           asset={asset}
           categories={categories}
+          departments={departments}
           onClose={() => setShowEditModal(false)}
           onSuccess={() => { setShowEditModal(false); fetchAsset(); }}
         />

@@ -43,13 +43,14 @@ const AssetDetail = () => {
 
   const activeAllocation = asset?.allocation_history?.find(a => a.status === 'Active');
 
+  // JWT user_id may be a string — compare loosely so holders see Mark Returned
   const isHolder = Boolean(
     activeAllocation && (
-      activeAllocation.employee === user?.id
+      Number(activeAllocation.employee) === Number(user?.id)
       || (
         user?.role === 'DepartmentHead'
         && activeAllocation.department
-        && activeAllocation.department === user?.department_id
+        && Number(activeAllocation.department) === Number(user?.department_id)
       )
     )
   );
@@ -58,15 +59,26 @@ const AssetDetail = () => {
 
   const handleReturn = async () => {
     if (!activeAllocation) return;
+    if (!returnNotes.trim()) {
+      alert('Please fill in condition check-in notes (e.g. "minor scratch on lid").');
+      return;
+    }
     setReturning(true);
     try {
-      await api.post(`allocations/${activeAllocation.id}/return/`, { checkin_condition_notes: returnNotes });
+      await api.post(`allocations/${activeAllocation.id}/return/`, {
+        checkin_condition_notes: returnNotes.trim(),
+      });
       setShowReturnForm(false);
       setReturnNotes('');
       setSuccessMsg('Asset marked as returned successfully.');
       fetchAsset();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Return failed.');
+      const data = err.response?.data;
+      alert(
+        data?.checkin_condition_notes
+        || data?.detail
+        || 'Return failed.'
+      );
     } finally { setReturning(false); }
   };
 
@@ -273,26 +285,41 @@ const AssetDetail = () => {
         )}
       </div>
 
-      {/* Return Form */}
+      {/* Return Form — Flow D */}
       {showReturnForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold text-slate-800 mb-4">Mark Asset Returned</h2>
+            <h2 className="text-lg font-bold text-slate-800 mb-1">Mark Asset Returned</h2>
+            <p className="text-sm text-slate-500 font-mono mb-4">
+              {asset.asset_tag} — {asset.name}
+            </p>
+            {activeAllocation && (
+              <p className="text-sm text-slate-600 mb-3">
+                Returning from{' '}
+                <span className="font-semibold">
+                  {activeAllocation.employee_name || activeAllocation.department_name}
+                </span>
+              </p>
+            )}
             <label className="block text-sm font-medium text-slate-700 mb-1">
-              Condition Check-in Notes <span className="text-slate-400">(optional)</span>
+              Condition Check-in Notes <span className="text-red-500">*</span>
             </label>
             <textarea
               rows={3}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Describe the asset condition on return…"
+              placeholder='e.g. "minor scratch on lid"'
               value={returnNotes}
               onChange={e => setReturnNotes(e.target.value)}
+              required
             />
+            <p className="text-xs text-slate-400 mt-2">
+              Required. Describe the asset condition on return. This closes the active allocation and sets the asset back to Available.
+            </p>
             <div className="flex justify-end gap-3 mt-4">
               <button onClick={() => setShowReturnForm(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium">Cancel</button>
               <button
                 onClick={handleReturn}
-                disabled={returning}
+                disabled={returning || !returnNotes.trim()}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
               >
                 {returning ? 'Processing…' : 'Confirm Return'}

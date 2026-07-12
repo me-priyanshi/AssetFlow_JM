@@ -241,7 +241,10 @@ class AllocationViewSet(viewsets.GenericViewSet):
 
     @action(detail=True, methods=['post'], url_path='return')
     def return_asset(self, request, pk=None):
-        """POST /api/allocations/{id}/return — holder or manager."""
+        """
+        POST /api/allocations/{id}/return — holder or manager (Flow D).
+        Early return is allowed: expected_return_date does not block returning.
+        """
         try:
             allocation = Allocation.objects.select_related(
                 'asset', 'employee', 'department'
@@ -261,8 +264,18 @@ class AllocationViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # No check against expected_return_date — employees may return early.
+
         pending = TransferRequest.objects.filter(allocation=allocation, status='Requested')
-        notes = request.data.get('checkin_condition_notes', '')
+        notes = (request.data.get('checkin_condition_notes') or '').strip()
+        if not notes:
+            return Response(
+                {
+                    'checkin_condition_notes':
+                    'Condition check-in notes are required (e.g. "minor scratch on lid" or "good condition").'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         with transaction.atomic():
             # Auto-reject pending transfers when the asset is returned
             pending.update(status='Rejected', approved_by=request.user)
@@ -272,8 +285,9 @@ class AllocationViewSet(viewsets.GenericViewSet):
             allocation.checkin_condition_notes = notes
             allocation.save(update_fields=['status', 'actual_return_date', 'checkin_condition_notes'])
 
-            allocation.asset.status = 'Available'
-            allocation.asset.save(update_fields=['status'])
+            # Allocated → Available via lifecycle service (Flow D)
+            from .services import transition_status
+            transition_status(allocation.asset, 'Available', request.user)
 
         serializer = self.get_serializer(allocation)
         return Response(serializer.data)
